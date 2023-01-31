@@ -1,7 +1,10 @@
 {
   "name": "smart-wallet-connect-example-contracts",
   "version": "0.0.0",
-  "scripts": {},
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test"
+  },
   "keywords": [],
   "author": "taxio.2029@gmail.com",
   "license": "MIT",
