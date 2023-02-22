@@ -19,4 +19,8 @@ contract SmartWallet is Ownable, IERC1271 {
       return 0xffffffff;
     }
   }
+
+  function balance() external view returns (uint256) {
+    return address(this).balance;
+  }
 }
