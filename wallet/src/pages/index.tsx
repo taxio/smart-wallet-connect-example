@@ -1,118 +1,116 @@
 import React, {MouseEvent, useEffect, useState} from "react";
-import AuthClient from "@walletconnect/auth-client";
-import {useConnect, useAccount, useDisconnect, useSignMessage, Address, useNetwork, Chain} from "wagmi";
+import { Core } from '@walletconnect/core'
+import { Web3Wallet } from '@walletconnect/web3wallet'
+import {ethers} from "ethers";
 
-type WalletConnectFormProps = {
-  chain: Chain;
-  eoaAddress: Address;
-}
+const core = new Core({
+  projectId: process.env.PROJECT_ID,
+});
 
-const WalletConnectForm: React.FC<WalletConnectFormProps> = props => {
-  const [authClient, setAuthClient] = useState<AuthClient>();
-  const [contractAddress, setContractAddress] = useState<string>("");
-  const [walletConnectUri, setWalletConnectUri] = useState<string>("");
-  const [connecting, setConnecting] = useState<boolean>(false);
-  const {signMessageAsync} = useSignMessage();
-
-  const initializeAuthClient = async () => {
-    const client = await AuthClient.init({
-      projectId: process.env.NEXT_PUBLIC_PROJECT_ID!,
-      relayUrl: process.env.NEXT_PUBLIC_RELAY_URL || "wss://relay.walletconnect.com",
-      metadata: {
-        name: "Contract Wallet connector",
-        description: "An example wallet application for connecting Contract Wallet to Dapps using WalletConnect",
-        url: 'https://walletconnect.com/',
-        icons: ['https://avatars.githubusercontent.com/u/37784886']
-      }
-    })
-    setAuthClient(client);
-  };
+const Home = () => {
+  //@ts-ignore
+  const [wallet, setWallet] = useState<Web3Wallet>();
+  const [signer, setSigner] = useState();
+  const [connectUri, setConnectUri] = useState<string>();
 
   useEffect(() => {
-    try {
-      (async () => {
-        await initializeAuthClient();
-      })()
-    } catch (e) {
-      alert(e);
-    }
+    const init = async () => {
+      const wallet = await Web3Wallet.init({
+        core,
+        metadata: {
+          name: 'Demo app',
+          description: 'Demo Client as Wallet/Peer',
+          url: 'www.walletconnect.com',
+          icons: []
+        }
+      });
+      setWallet(wallet);
+
+      const _signer = ethers.Wallet.createRandom();
+      // @ts-ignore
+      setSigner(_signer);
+
+      // example dapp: https://react-app.walletconnect.com/
+      wallet.on('session_proposal', async event => {
+        console.log("session_proposal", JSON.stringify(event,null,2));
+        const { params } = event;
+        const {requiredNamespaces,proposer,id} = params;
+        const _wallet = ethers.Wallet.createRandom();
+        const address = _wallet.address;
+        const namespaceTuples = Object.keys(requiredNamespaces)
+          .map(key => [
+              key, 
+              {...requiredNamespaces[key],accounts:requiredNamespaces[key].chains?.map(chain=>chain+':'+address)}
+          ]);
+        const namespaces = Object.fromEntries(namespaceTuples);
+        await wallet.approveSession({
+          id,
+          namespaces,
+        });
+      });
+
+      // ここにあらゆる署名系リクエストが飛んでくる
+      wallet.on("session_request", async event => {
+        console.log("session_request", event);
+      });
+
+      // dapp がセッションを切った時に発火する。
+      // wallet 側は保持している session uri を捨てる。
+      wallet.on("session_delete", async event => {
+        console.log("session_delete", event);
+      })
+
+      // example dapp: https://react-auth-dapp.walletconnect.com/
+      wallet.on("auth_request", async event => {
+        console.log("auth_request", event);
+
+        // privKey生成
+        const _wallet = ethers.Wallet.createRandom();
+        // const privKey = _wallet.privateKey;
+        const address = _wallet.address;
+        
+        // request 取り出す
+        const {id, topic, params} = event;
+        const {requester, cacaoPayload} = params;
+
+        // iss 作る
+        const iss = `did:pkh:eip155:5:${address}`;
+
+        // sign する
+        const message = wallet.formatMessage(cacaoPayload, iss);
+        const signature = await _wallet.signMessage(message);
+
+        console.log("signature", signature);
+
+        await wallet.respondAuthRequest(
+          {
+            id: id,
+            signature: {
+              s: signature,
+              t: "eip191"
+            },
+          },
+          iss
+        );
+      });
+
+      console.log('wallet', wallet);
+    };
+    init();
   }, []);
 
-  const onConnect = async (e: MouseEvent<HTMLElement>) => {
+  const onConnect = async (e: MouseEvent) => {
     e.preventDefault();
-    if (!authClient) return;
-
-    setConnecting(true);
-
-    authClient.on('auth_request', async ({id, params}) => {
-      const iss = `did:pkh:eip155:${props.chain.id}:${contractAddress}`;
-      const message = authClient.formatMessage(params.cacaoPayload, iss);
-      const signature = await signMessageAsync({message});
-
-      await authClient.respond(
-        {
-          id: id,
-          signature: {
-            s: signature,
-            t: "eip1271",
-          }
-        },
-        iss,
-      );
-    })
-
-    try {
-      await authClient.core.pairing.pair({uri: walletConnectUri});
-    } catch (e) {
-      alert(e);
-    } finally {
-      setConnecting(false);
-    }
+    console.log('connectUri', connectUri);
+    localStorage.setItem('connectUri', connectUri ?? "");
+    await wallet.core.pairing.pair({ uri: connectUri });
   };
-
-  return (
-    <>
-      <p>WalletConnect Form</p>
-      <label>Contract Wallet Address </label>
-      <input value={contractAddress} onChange={e => setContractAddress(e.target.value)}/>
-      <br/>
-      <label>WalletConnect URI </label>
-      <input value={walletConnectUri} onChange={e => setWalletConnectUri(e.target.value)}/>
-      <br/>
-      <button onClick={onConnect} disabled={connecting}>
-        connect
-        {connecting && ' (connecting)'}
-      </button>
-    </>
-  );
-}
-const Home = () => {
-  const {address: eoaAddress, isConnected: eoaIsConnected} = useAccount();
-  const {connect, connectors, isLoading, pendingConnector} = useConnect();
-  const {chain} = useNetwork();
-  const {disconnect} = useDisconnect();
 
   return (
     <>
       <p>Web3 Wallet</p>
-      {eoaIsConnected ? <>
-        <p>EOA Connected: {eoaAddress} ({chain?.name})</p>
-        <button onClick={() => disconnect()}>Disconnect</button>
-        <WalletConnectForm chain={chain!} eoaAddress={eoaAddress!}/>
-      </> : <>
-        <p>EOA Not Connected</p>
-        {connectors.map(connector => (
-          <button
-            disabled={!connector.ready}
-            key={connector.id}
-            onClick={() => connect({connector})}
-          >
-            {connector.name}
-            {!connector.ready && ' (unsupported)'}
-            {isLoading && connector.id === pendingConnector?.id && ' (connecting)'}
-          </button>
-        ))}
-      </>}
+      <input value={connectUri} onChange={e => setConnectUri(e.target.value)}/>
+      <button onClick={onConnect}>connect</button>
     </>
   );
 }
